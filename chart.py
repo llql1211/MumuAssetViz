@@ -28,6 +28,12 @@ logger = logging.getLogger(__name__)
 OUTPUT_DIR = Path(__file__).parent / "output"
 OUTPUT_FILE = OUTPUT_DIR / "chart.html"
 
+# 优先使用项目内打包的 echarts.min.js（随仓库提交，运行时零下载）
+ASSETS_DIR = Path(__file__).parent / "assets"
+BUNDLED_ECHARTS = ASSETS_DIR / "echarts.min.js"
+# 页面在 output/chart.html，指向 assets/echarts.min.js 的相对路径
+BUNDLED_ECHARTS_SRC = "../assets/echarts.min.js"
+
 # ---- 纵轴折叠参数 ----
 Y_FOLD_ENABLED = True
 Y_FOLD_K = 5          # |日变化| > k × 中位数 → 视为异常跳跃
@@ -152,12 +158,15 @@ function(value) {{
 # ---------------------------------------------------------------------------
 
 def _ensure_echarts_js() -> str:
-    """确保本地有 echarts.min.js，返回页面引用路径。
+    """返回页面引用的 echarts.min.js 路径。
 
-    依次尝试多个源下载到 output/ 下（带超时）；全部失败则回退到首个
-    CDN 地址（页面内会显示加载失败提示）。首次成功后离线可用。
+    优先级：项目内打包的 assets/echarts.min.js → output/ 下已下载的副本
+    → 运行时下载。仅当前两者都不存在才下载，且成功后落盘，下次直接复用。
     """
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)  # 必须先建目录再下载
+    if BUNDLED_ECHARTS.exists() and BUNDLED_ECHARTS.stat().st_size > 100_000:
+        return BUNDLED_ECHARTS_SRC
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     local = OUTPUT_DIR / "echarts.min.js"
     if local.exists() and local.stat().st_size > 100_000:
         return "echarts.min.js"
