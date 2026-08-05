@@ -48,7 +48,7 @@ Y_FOLD_BAND = 0.06    # 每个折叠段占显示高度的比例
 
 # ---- 时间段预设 ----
 # 主图（每日资产）：相对最新日期的天数
-PRESET_DAYS = {"1m": 30, "3m": 90, "6m": 180, "1y": 365}
+PRESET_DAYS = {"1m": 30, "3m": 90, "6m": 180, "1y": 365, "3y": 1095}
 # 月图（每月结余）：相对最新月份的年数
 MONTH_PRESET_YEARS = {"1y": 1, "3y": 3, "5y": 5}
 
@@ -302,7 +302,6 @@ def _build_option(
     }
 
     return {
-        "title": {"text": "资产变化图", "left": "center", "textStyle": {"fontSize": 18}},
         "tooltip": {
             "trigger": "axis",
             "backgroundColor": "rgba(255,255,255,0.96)",
@@ -312,7 +311,7 @@ def _build_option(
             "textStyle": {"color": "#333"},
             "formatter": _RawJS(_tooltip_js(assets)),
         },
-        "legend": {"data": ["累计资产", "每日支出"], "top": 35},
+        "legend": {"data": ["累计资产", "每日支出"], "top": 35, "textStyle": {"color": "#222"}},
         "grid": {"left": "3%", "right": "4%", "bottom": "15%", "top": "18%", "containLabel": True},
         "xAxis": {
             "type": "category",
@@ -411,7 +410,7 @@ function(params) {{
             "textStyle": {"color": "#333"},
             "formatter": _RawJS(tooltip_js),
         },
-        "legend": {"data": ["每月结余", "累计资产"], "top": 35},
+        "legend": {"data": ["每月结余", "累计资产"], "top": 35, "textStyle": {"color": "#222"}},
         "grid": {"left": "3%", "right": "4%", "bottom": "15%", "top": "18%", "containLabel": True},
         "xAxis": {
             "type": "category",
@@ -512,6 +511,8 @@ _TEMPLATE = """<!DOCTYPE html>
 </head>
 <body>
 <div class="container">
+  <h2 style="font-size:17px;text-align:center;color:#333;margin-bottom:6px;">每日变化</h2>
+  <p style="font-size:12px;text-align:center;color:#999;margin:0 0 10px;">可以点击图例按钮隐藏曲线</p>
   <div class="controls" data-chart="daily">
     <button data-range="all" class="active" onclick="setRange('all')">全部</button>
     <span class="sep">|</span>
@@ -519,6 +520,7 @@ _TEMPLATE = """<!DOCTYPE html>
     <button data-range="3m" onclick="setRange('3m')">近3月</button>
     <button data-range="6m" onclick="setRange('6m')">近6月</button>
     <button data-range="1y" onclick="setRange('1y')">近1年</button>
+    <button data-range="3y" onclick="setRange('3y')">近3年</button>
     <span class="sep">|</span>
     <span style="font-size:13px;color:#666;">自定义</span>
     <input type="date" id="date-start" title="开始日期">
@@ -528,12 +530,14 @@ _TEMPLATE = """<!DOCTYPE html>
   <div id="chart"></div>
 
   <hr style="margin:28px 0;border:none;border-top:1px solid #eee;">
-  <h2 style="font-size:17px;text-align:center;color:#333;margin-bottom:14px;">每月结余</h2>
+  <h2 style="font-size:17px;text-align:center;color:#333;margin-bottom:6px;">每月结余</h2>
+  <p style="font-size:12px;text-align:center;color:#999;margin:0 0 10px;">可以点击图例按钮隐藏曲线</p>
   <div class="controls" data-chart="month">
+    <button data-range="all" onclick="setRangeMonth('all')">全部</button>
+    <span class="sep">|</span>
     <button data-range="1y" class="active" onclick="setRangeMonth('1y')">近1年</button>
     <button data-range="3y" onclick="setRangeMonth('3y')">近3年</button>
     <button data-range="5y" onclick="setRangeMonth('5y')">近5年</button>
-    <button data-range="all" onclick="setRangeMonth('all')">全部</button>
     <span class="sep">|</span>
     <span style="font-size:13px;color:#666;">自定义</span>
     <input type="month" id="month-start" title="开始月份">
