@@ -19,7 +19,7 @@ CACHE_DIR = Path(__file__).parent / "cache"
 CACHE_FILE = CACHE_DIR / "daily.pkl"
 
 # 解析/聚合逻辑版本号；变更逻辑时 +1，强制重建缓存
-CACHE_VERSION = 1
+CACHE_VERSION = 3
 
 
 def _file_key(path: Path) -> dict:

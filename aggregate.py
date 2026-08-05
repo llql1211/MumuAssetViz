@@ -24,8 +24,10 @@ def aggregate(detail: pd.DataFrame) -> pd.DataFrame:
     neg = detail[detail["amount"] < 0]
     expense = -neg.groupby(pd.to_datetime(neg["date"]))["amount"].sum()
 
+    # 累计资产 = 每日净额 cumsum（起始 0）；无账目的天向后继承（ffill）
     full = pd.date_range(net.index.min(), net.index.max(), freq="D")
-    asset = net.reindex(full).ffill().fillna(0.0)
+    cum = net.cumsum()
+    asset = cum.reindex(full).ffill().fillna(0.0)
     expense_full = expense.reindex(full).fillna(0.0)
 
     daily = pd.DataFrame(

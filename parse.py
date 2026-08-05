@@ -63,8 +63,16 @@ def parse_xlsx(path: Path) -> pd.DataFrame:
     if unknown.any():
         logger.warning("跳过 %d 行：未知类型 %s", int(unknown.sum()), sorted(types[unknown].unique()))
 
-    # 金额转 float
-    amounts = pd.to_numeric(raw["金额"], errors="coerce")
+    # 金额转 float：先清理千分位逗号、货币符号、空白
+    # （否则 "4,549.00" 这类文本单元格会被 to_numeric 判成 NaN 而丢弃）
+    amounts = pd.to_numeric(
+        raw["金额"].astype(str)
+        .str.replace(",", "", regex=False)
+        .str.replace("¥", "", regex=False)
+        .str.replace("￥", "", regex=False)
+        .str.strip(),
+        errors="coerce",
+    )
     bad_amount = amounts.isna()
     if bad_amount.any():
         logger.warning("跳过 %d 行：金额无效", int(bad_amount.sum()))
