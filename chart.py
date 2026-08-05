@@ -18,10 +18,17 @@ from datetime import timedelta
 from pathlib import Path
 
 import pandas as pd
-from pyecharts import options as opts
-from pyecharts.charts import Bar
-from pyecharts.commons.utils import JsCode
+from pyecharts.commons.utils import JsCode  # noqa: F401  # 保留 pyecharts 依赖引用
 from pyecharts.globals import CurrentConfig
+
+# ---- 自控序列化：不依赖 pyecharts JsCode 的内部格式 ----
+
+class _RawJS:
+    """标记一段原始 JS 代码，_dump_option 会内联为不带引号的原始文本。"""
+    __slots__ = ("code",)
+
+    def __init__(self, code: str) -> None:
+        self.code = code
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +46,17 @@ Y_FOLD_ENABLED = True
 Y_FOLD_K = 5          # |日变化| > k × 中位数 → 视为异常跳跃
 Y_FOLD_BAND = 0.06    # 每个折叠段占显示高度的比例
 
-# ---- 时间段预设（相对最新日期的天数）----
+# ---- 时间段预设 ----
+# 主图（每日资产）：相对最新日期的天数
 PRESET_DAYS = {"1m": 30, "3m": 90, "6m": 180, "1y": 365}
+# 月图（每月结余）：相对最新月份的年数
+MONTH_PRESET_YEARS = {"1y": 1, "3y": 3, "5y": 5}
 
 # ---- 颜色 ----
 COLOR_ASSET = "#FF6B6B"          # 资产折线：珊瑚红
 COLOR_EXPENSE = "rgba(173,216,230,0.55)"  # 支出条形：浅蓝
+COLOR_POS = "#2ecc71"            # 每月结余为正：绿
+COLOR_NEG = "#e74c3c"            # 每月结余为负：红
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +166,36 @@ function(value) {{
 
 
 # ---------------------------------------------------------------------------
+# option 序列化
+# ---------------------------------------------------------------------------
+
+def _dump_option(option: dict) -> str:
+    """将 option 序列化为 JS 对象字面量；JsCode 内联为原始 JS（不带引号）。
+
+    不再依赖 pyecharts 的 render_embed()（它返回完整 HTML 页面，无法内嵌），
+    改为自控序列化后，直接在模板里 echarts.init().setOption()。
+    """
+    codes: list[str] = []
+
+    def walk(o):
+        if isinstance(o, _RawJS):
+            idx = len(codes)
+            codes.append(o.code)
+            return f"__RAWJS_{idx}__"
+        if isinstance(o, dict):
+            return {k: walk(v) for k, v in o.items()}
+        if isinstance(o, (list, tuple)):
+            return [walk(v) for v in o]
+        return o
+
+    cleaned = walk(option)
+    s = json.dumps(cleaned, ensure_ascii=False)
+    for i, code in enumerate(codes):
+        s = s.replace(f'"__RAWJS_{i}__"', code)
+    return s
+
+
+# ---------------------------------------------------------------------------
 # echarts.min.js 本地化
 # ---------------------------------------------------------------------------
 
@@ -235,7 +277,7 @@ def _build_option(
             "min": 0,
             "max": 1,
             "splitLine": {"lineStyle": {"type": "dashed", "color": "#eee"}},
-            "axisLabel": {"formatter": JsCode(_inverse_js(fold))},
+            "axisLabel": {"formatter": _RawJS(_inverse_js(fold))},
             "nameTextStyle": {"fontSize": 12},
         }
         assets_plot = [round(fold["forward"](v), 6) for v in assets]
@@ -268,7 +310,7 @@ def _build_option(
             "borderWidth": 1,
             "padding": [10, 14],
             "textStyle": {"color": "#333"},
-            "formatter": JsCode(_tooltip_js(assets)),
+            "formatter": _RawJS(_tooltip_js(assets)),
         },
         "legend": {"data": ["累计资产", "每日支出"], "top": 35},
         "grid": {"left": "3%", "right": "4%", "bottom": "15%", "top": "18%", "containLabel": True},
@@ -325,6 +367,124 @@ def _build_option(
     }
 
 
+def _build_monthly_option(
+    months: list[str],
+    nets: list[float],
+    assets: list[float],
+) -> dict:
+    """构建每月结余图 option。
+
+    - 每月净结余：绿/红条形（正绿负红），右轴对称取值 → 零点居中；
+    - 每月末累计资产：折线，走独立左轴，避免被结余量级压扁。
+    """
+    max_abs = max(abs(v) for v in nets) if nets else 0.0
+    m = max_abs * 1.1 if max_abs > 0 else 1.0  # 右轴 min/max 对称，零点居中
+
+    bar_color = _RawJS(
+        f"function(params) {{ return params.value >= 0 ? '{COLOR_POS}' : '{COLOR_NEG}'; }}"
+    )
+
+    tooltip_js = f"""
+function(params) {{
+    var bar = params.find(function(sp) {{ return sp.seriesName === '每月结余'; }});
+    if (!bar) return '';
+    var line = params.find(function(sp) {{ return sp.seriesName === '累计资产'; }});
+    var net = bar.value;
+    var asset = line ? line.value : '';
+    var fmt = function(x) {{
+        return Number(x).toLocaleString('zh-CN', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+    }};
+    var color = net >= 0 ? '{COLOR_POS}' : '{COLOR_NEG}';
+    return '<div style="font-size:14px;font-weight:bold;margin-bottom:4px">' + bar.axisValue + '</div>'
+        + '<div>每月结余: <span style="color:' + color + ';font-weight:bold">¥' + fmt(net) + '</span></div>'
+        + '<div>累计资产: <span style="color:{COLOR_ASSET};font-weight:bold">¥' + fmt(asset) + '</span></div>';
+}}
+"""
+
+    return {
+        "tooltip": {
+            "trigger": "axis",
+            "backgroundColor": "rgba(255,255,255,0.96)",
+            "borderColor": "#ddd",
+            "borderWidth": 1,
+            "padding": [10, 14],
+            "textStyle": {"color": "#333"},
+            "formatter": _RawJS(tooltip_js),
+        },
+        "legend": {"data": ["每月结余", "累计资产"], "top": 35},
+        "grid": {"left": "3%", "right": "4%", "bottom": "15%", "top": "18%", "containLabel": True},
+        "xAxis": {
+            "type": "category",
+            "data": months,
+            "axisPointer": {
+                "type": "line",
+                "lineStyle": {"type": "dashed", "color": "#999", "width": 1},
+            },
+            "axisLabel": {"rotate": 45, "fontSize": 11},
+        },
+        "yAxis": [
+            {
+                "type": "value",
+                "name": "累计资产",
+                "position": "left",
+                "splitLine": {"lineStyle": {"type": "dashed", "color": "#eee"}},
+                "nameTextStyle": {"fontSize": 12},
+            },
+            {
+                "type": "value",
+                "name": "每月结余",
+                "position": "right",
+                "min": -m,
+                "max": m,
+                "splitLine": {"show": False},
+                "axisLabel": {"fontSize": 10},
+                "nameTextStyle": {"fontSize": 12},
+            },
+        ],
+        "series": [
+            {
+                "name": "每月结余",
+                "type": "bar",
+                "yAxisIndex": 1,
+                "data": [round(v, 2) for v in nets],
+                "barWidth": "50%",
+                "itemStyle": {"color": bar_color},
+                "markLine": {
+                    "silent": True,
+                    "symbol": "none",
+                    "lineStyle": {"color": "#bbb", "type": "dashed"},
+                    "data": [{"yAxis": 0}],
+                },
+            },
+            {
+                "name": "累计资产",
+                "type": "line",
+                "yAxisIndex": 0,
+                "data": [round(v, 2) for v in assets],
+                "smooth": True,
+                "symbol": "circle",
+                "symbolSize": 4,
+                "lineStyle": {"color": COLOR_ASSET, "width": 2},
+                "itemStyle": {"color": COLOR_ASSET},
+                "z": 2,
+                "emphasis": {"symbolSize": 10},
+            },
+        ],
+        "dataZoom": [
+            {"type": "inside", "start": 0, "end": 100},
+            {
+                "type": "slider",
+                "start": 0,
+                "end": 100,
+                "bottom": 5,
+                "height": 20,
+                "borderColor": "#ddd",
+                "fillerColor": "rgba(173,216,230,0.25)",
+            },
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # 页面模板
 # ---------------------------------------------------------------------------
@@ -345,14 +505,15 @@ _TEMPLATE = """<!DOCTYPE html>
   .controls button {{ padding: 5px 14px; border: 1px solid #d0d0d0; border-radius: 6px; background: #fff; cursor: pointer; font-size: 13px; transition: all 0.15s; }}
   .controls button:hover {{ background: #e8f4fd; border-color: #87CEEB; }}
   .controls button.active {{ background: {color_asset}; color: #fff; border-color: {color_asset}; }}
-  .controls input[type="date"] {{ padding: 4px 8px; border: 1px solid #d0d0d0; border-radius: 6px; font-size: 13px; }}
-  .controls input[type="date"]:focus {{ outline: none; border-color: #87CEEB; }}
+  .controls input[type="date"], .controls input[type="month"] {{ padding: 4px 8px; border: 1px solid #d0d0d0; border-radius: 6px; font-size: 13px; }}
+  .controls input[type="date"]:focus, .controls input[type="month"]:focus {{ outline: none; border-color: #87CEEB; }}
+  #chart, #chart_month {{ width: 100%; height: 600px; }}
 </style>
 </head>
 <body>
 <div class="container">
-  <div class="controls">
-    <button data-range="all" onclick="setRange('all')">全部</button>
+  <div class="controls" data-chart="daily">
+    <button data-range="all" class="active" onclick="setRange('all')">全部</button>
     <span class="sep">|</span>
     <button data-range="1m" onclick="setRange('1m')">近1月</button>
     <button data-range="3m" onclick="setRange('3m')">近3月</button>
@@ -362,45 +523,93 @@ _TEMPLATE = """<!DOCTYPE html>
     <span style="font-size:13px;color:#666;">自定义</span>
     <input type="date" id="date-start" title="开始日期">
     <input type="date" id="date-end" title="结束日期">
-    <button onclick="applyCustom()">应用</button>
+    <button onclick="applyCustomDaily()">应用</button>
   </div>
-  {embed}
+  <div id="chart"></div>
+
+  <hr style="margin:28px 0;border:none;border-top:1px solid #eee;">
+  <h2 style="font-size:17px;text-align:center;color:#333;margin-bottom:14px;">每月结余</h2>
+  <div class="controls" data-chart="month">
+    <button data-range="1y" class="active" onclick="setRangeMonth('1y')">近1年</button>
+    <button data-range="3y" onclick="setRangeMonth('3y')">近3年</button>
+    <button data-range="5y" onclick="setRangeMonth('5y')">近5年</button>
+    <button data-range="all" onclick="setRangeMonth('all')">全部</button>
+    <span class="sep">|</span>
+    <span style="font-size:13px;color:#666;">自定义</span>
+    <input type="month" id="month-start" title="开始月份">
+    <input type="month" id="month-end" title="结束月份">
+    <button onclick="applyCustomMonth()">应用</button>
+  </div>
+  <div id="chart_month"></div>
 </div>
 <script>
 var PRESETS = {presets};
 var MAX_DATE = '{max_date}';
-
-document.getElementById('date-start').value = PRESETS['1m'];
-document.getElementById('date-end').value = MAX_DATE;
+var MONTH_PRESETS = {month_presets};
+var LAST_MONTH = '{last_month}';
+var OPTION_DAILY = {option_daily};
+var OPTION_MONTH = {option_month};
 
 if (typeof echarts === 'undefined') {{
   var el = document.getElementById('chart');
   if (el) el.innerHTML = '<div style="padding:60px 20px;text-align:center;color:#c0392b;font-size:15px;">⚠ echarts.min.js 加载失败：请检查网络，或将 echarts.min.js 手动放入 output/ 目录后刷新页面</div>';
 }} else {{
-  var chart = echarts.getInstanceByDom(document.getElementById('chart'));
+  var chartDaily = echarts.init(document.getElementById('chart'));
+  var chartMonth = echarts.init(document.getElementById('chart_month'));
+  chartDaily.setOption(OPTION_DAILY);
+  chartMonth.setOption(OPTION_MONTH);
 
-  function setRange(name) {{
-    document.querySelectorAll('.controls button[data-range]').forEach(function(b) {{
-      b.classList.toggle('active', b.dataset.range === name);
-    }});
-    chart.setOption({{ dataZoom: [
-      {{ startValue: PRESETS[name], endValue: MAX_DATE }},
-      {{ startValue: PRESETS[name], endValue: MAX_DATE }}
-    ] }});
-  }}
+  document.getElementById('date-start').value = PRESETS['1m'];
+  document.getElementById('date-end').value = MAX_DATE;
+  document.getElementById('month-start').value = MONTH_PRESETS['1y'];
+  document.getElementById('month-end').value = LAST_MONTH;
 
-  function applyCustom() {{
-    var start = document.getElementById('date-start').value;
-    var end = document.getElementById('date-end').value;
-    if (!start || !end) return;
-    document.querySelectorAll('.controls button[data-range]').forEach(function(b) {{
-      b.classList.remove('active');
-    }});
+  function zoomTo(chart, start, end) {{
     chart.setOption({{ dataZoom: [
       {{ startValue: start, endValue: end }},
       {{ startValue: start, endValue: end }}
     ] }});
   }}
+
+  // 主图（每日资产）时间段
+  function setRange(name) {{
+    document.querySelectorAll('.controls[data-chart="daily"] button[data-range]').forEach(function(b) {{
+      b.classList.toggle('active', b.dataset.range === name);
+    }});
+    zoomTo(chartDaily, PRESETS[name], MAX_DATE);
+  }}
+
+  function applyCustomDaily() {{
+    var s = document.getElementById('date-start').value;
+    var e = document.getElementById('date-end').value;
+    if (!s || !e) return;
+    document.querySelectorAll('.controls[data-chart="daily"] button[data-range]').forEach(function(b) {{
+      b.classList.remove('active');
+    }});
+    zoomTo(chartDaily, s, e);
+  }}
+
+  // 月图（每月结余）时间段
+  function setRangeMonth(name) {{
+    document.querySelectorAll('.controls[data-chart="month"] button[data-range]').forEach(function(b) {{
+      b.classList.toggle('active', b.dataset.range === name);
+    }});
+    zoomTo(chartMonth, MONTH_PRESETS[name], LAST_MONTH);
+  }}
+
+  function applyCustomMonth() {{
+    var s = document.getElementById('month-start').value;
+    var e = document.getElementById('month-end').value;
+    if (!s || !e) return;
+    document.querySelectorAll('.controls[data-chart="month"] button[data-range]').forEach(function(b) {{
+      b.classList.remove('active');
+    }});
+    zoomTo(chartMonth, s, e);
+  }}
+
+  // 初始视图：主图全部、月图近1年
+  setRange('all');
+  setRangeMonth('1y');
 }}
 </script>
 </body>
@@ -440,19 +649,34 @@ def build_html(daily: pd.DataFrame) -> Path:
 
     option = _build_option(dates, assets, expenses, fold)
 
-    # 用 PyECharts 渲染可嵌入片段，再套自定义模板
-    chart = Bar(init_opts=opts.InitOpts(chart_id="chart", width="100%", height="600px"))
-    chart.options = option
-    embed = chart.render_embed()
-    # 防御：若 render_embed 未输出容器 div，手动补一个
-    if "<div" not in embed:
-        embed = '<div id="chart" style="width:100%;height:600px"></div>\n' + embed
+    # 每月数据：每月末累计资产 + 每月净结余（可由日数据直接推出）
+    monthly_asset = daily["asset"].resample("ME").last()
+    monthly_net = monthly_asset.diff().fillna(monthly_asset.iloc[0])
+    months = [ts.strftime("%Y-%m") for ts in monthly_asset.index]
+    nets = [round(float(v), 2) for v in monthly_net]
+    assets_m = [round(float(v), 2) for v in monthly_asset]
+    option_month = _build_monthly_option(months, nets, assets_m)
+
+    # 月图时间段预设：相对最新月份往前推 N 年
+    last_month = months[-1] if months else ""
+    month_presets = {"all": months[0]} if months else {"all": ""}
+    if len(monthly_asset) > 0:
+        last_ts = monthly_asset.index[-1]
+        for key, years in MONTH_PRESET_YEARS.items():
+            month_presets[key] = (last_ts - pd.DateOffset(years=years)).strftime("%Y-%m")
+
+    # 序列化 option 为 JS 字面量（JsCode 内联），模板里直接 init+setOption
+    option_daily = _dump_option(option)
+    option_month = _dump_option(option_month)
 
     html = _TEMPLATE.format(
         echarts_src=_ensure_echarts_js(),
         presets=json.dumps(presets, ensure_ascii=False),
         max_date=max_date,
-        embed=embed,
+        month_presets=json.dumps(month_presets, ensure_ascii=False),
+        last_month=last_month,
+        option_daily=option_daily,
+        option_month=option_month,
         color_asset=COLOR_ASSET,
     )
 
