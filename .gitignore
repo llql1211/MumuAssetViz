@@ -1,0 +1,13 @@
+# pixi environments
+.pixi/*
+!.pixi/config.toml
+
+# developing environments
+.claude/
+.vscode/
+__pycache__/
+
+archived/
+cache/
+input/
+output/

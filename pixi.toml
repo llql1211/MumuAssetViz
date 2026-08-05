@@ -1,0 +1,14 @@
+[workspace]
+authors = ["llql1211 <1390116067@qq.com>"]
+channels = ["conda-forge"]
+name = "MumuAssetViz"
+platforms = ["win-64"]
+version = "0.1.0"
+
+[tasks]
+
+[dependencies]
+python = "3.12.*"
+pandas = ">=3.0.5,<4"
+pyecharts = ">=2.1.0,<3"
+openpyxl = ">=3.1.5,<4"
