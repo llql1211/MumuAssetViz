@@ -41,11 +41,6 @@ BUNDLED_ECHARTS = ASSETS_DIR / "echarts.min.js"
 # 页面在 output/chart.html，指向 assets/echarts.min.js 的相对路径
 BUNDLED_ECHARTS_SRC = "../assets/echarts.min.js"
 
-# ---- 纵轴折叠参数 ----
-Y_FOLD_ENABLED = True
-Y_FOLD_K = 5          # |日变化| > k × 中位数 → 视为异常跳跃
-Y_FOLD_BAND = 0.06    # 每个折叠段占显示高度的比例
-
 # ---- 时间段预设 ----
 # 主图（每日资产）：相对最新日期的天数
 PRESET_DAYS = {"1m": 30, "3m": 90, "6m": 180, "1y": 365, "3y": 1095}
@@ -57,112 +52,6 @@ COLOR_ASSET = "#FF6B6B"          # 资产折线：珊瑚红
 COLOR_EXPENSE = "rgba(173,216,230,0.55)"  # 支出条形：浅蓝
 COLOR_POS = "#2ecc71"            # 每月结余为正：绿
 COLOR_NEG = "#e74c3c"            # 每月结余为负：红
-
-
-# ---------------------------------------------------------------------------
-# 纵轴折叠
-# ---------------------------------------------------------------------------
-
-def build_y_fold(asset: pd.Series) -> dict | None:
-    """检测异常跳跃，构建「真实值 → 显示值[0,1]」的分段线性映射。
-
-    返回 dict（含 forward 闭包与折叠段信息），无异常时返回 None。
-    """
-    changes = asset.diff().abs()
-    baseline = changes[changes > 0].median()
-    if pd.isna(baseline) or baseline == 0:
-        return None
-    threshold = Y_FOLD_K * baseline
-
-    spike = changes[changes > threshold]
-    if len(spike) == 0:
-        return None
-
-    # 收集每个跳跃在纵轴上覆盖的区间
-    segments = []
-    for pos in spike.index:
-        loc = asset.index.get_loc(pos)
-        prev = asset.iloc[loc - 1] if loc > 0 else asset.iloc[loc]
-        curr = asset.iloc[loc]
-        segments.append((min(prev, curr), max(prev, curr)))
-
-    # 排序并合并重叠区间
-    segments.sort()
-    merged: list[list[float]] = [[float(segments[0][0]), float(segments[0][1])]]
-    for lo, hi in segments[1:]:
-        if lo <= merged[-1][1]:
-            merged[-1][1] = max(merged[-1][1], hi)
-        else:
-            merged.append([float(lo), float(hi)])
-
-    y_min = float(asset.min())
-    y_max = float(asset.max())
-
-    # 正常区间总跨度 = 总范围 − 折叠段跨度
-    normal_total = (y_max - y_min) - sum(hi - lo for lo, hi in merged)
-    if normal_total <= 0:
-        return None  # 全部都是折叠段，放弃
-
-    n_folds = len(merged)
-    display_normal = 1.0 - n_folds * Y_FOLD_BAND
-    scale = display_normal / normal_total
-
-    ranges = merged  # 已合并、非重叠、升序
-
-    def forward(v: float) -> float:
-        """真实值 → 显示值 [0, 1]。"""
-        v = max(y_min, min(y_max, float(v)))
-        disp = 0.0
-        prev_end = y_min
-        for lo, hi in ranges:
-            if v < lo:                      # 落在本折叠段前的正常区间
-                return disp + scale * (v - prev_end)
-            if v <= hi:                     # 落在折叠段内 → 压缩到窄带
-                frac = (v - lo) / (hi - lo) if hi > lo else 0.0
-                return disp + scale * (lo - prev_end) + Y_FOLD_BAND * frac
-            disp += scale * (lo - prev_end) + Y_FOLD_BAND
-            prev_end = hi
-        return disp + scale * (v - prev_end)  # 最后一个折叠段之后的正常区间
-
-    return {
-        "ranges": ranges,
-        "y_min": y_min,
-        "y_max": y_max,
-        "scale": scale,
-        "band": Y_FOLD_BAND,
-        "forward": forward,
-    }
-
-
-def _inverse_js(fold: dict) -> str:
-    """生成显示值 → 真实值的 JS 反函数（用于 axisLabel formatter）。"""
-    ranges_json = json.dumps(fold["ranges"])
-    return f"""
-function(value) {{
-    if (value === '' || value === null || value === undefined) return '';
-    var d = Number(value);
-    var folds = {ranges_json};
-    var yMin = {fold["y_min"]};
-    var scale = {fold["scale"]};
-    var band = {fold["band"]};
-    var acc = 0.0, prevEnd = yMin;
-    for (var i = 0; i < folds.length; i++) {{
-        var lo = folds[i][0], hi = folds[i][1];
-        var normalLen = lo - prevEnd;
-        if (d <= acc + scale * normalLen) {{
-            return prevEnd + (d - acc) / scale;
-        }}
-        acc += scale * normalLen;
-        if (d <= acc + band) {{
-            var frac = (d - acc) / band;
-            return lo + frac * (hi - lo);
-        }}
-        acc += band;
-        prevEnd = hi;
-    }}
-    return prevEnd + (d - acc) / scale;
-}}
-"""
 
 
 # ---------------------------------------------------------------------------
@@ -265,31 +154,16 @@ def _build_option(
     dates: list[str],
     assets: list[float],
     expenses: list[float],
-    fold: dict | None,
 ) -> dict:
     """构建完整 ECharts option 字典。"""
-    # 折叠启用时：资产用显示值绘制，axisLabel 反函数还原真实值
-    if fold:
-        y_axis_0 = {
-            "type": "value",
-            "name": "资产（折叠）",
-            "position": "left",
-            "min": 0,
-            "max": 1,
-            "splitLine": {"lineStyle": {"type": "dashed", "color": "#eee"}},
-            "axisLabel": {"formatter": _RawJS(_inverse_js(fold))},
-            "nameTextStyle": {"fontSize": 12},
-        }
-        assets_plot = [round(fold["forward"](v), 6) for v in assets]
-    else:
-        y_axis_0 = {
-            "type": "value",
-            "name": "资产",
-            "position": "left",
-            "splitLine": {"lineStyle": {"type": "dashed", "color": "#eee"}},
-            "nameTextStyle": {"fontSize": 12},
-        }
-        assets_plot = assets
+    y_axis_0 = {
+        "type": "value",
+        "name": "资产",
+        "position": "left",
+        "splitLine": {"lineStyle": {"type": "dashed", "color": "#eee"}},
+        "nameTextStyle": {"fontSize": 12},
+    }
+    assets_plot = assets
 
     # 支出条形走独立右轴，锚定横轴、自成一系，避免被资产量级压扁
     y_axis_1 = {
@@ -641,17 +515,7 @@ def build_html(daily: pd.DataFrame) -> Path:
     for key, days in PRESET_DAYS.items():
         presets[key] = (max_dt - timedelta(days=days)).strftime("%Y-%m-%d")
 
-    # 纵轴折叠
-    fold = None
-    if Y_FOLD_ENABLED:
-        try:
-            fold = build_y_fold(daily["asset"])
-            if fold:
-                logger.info("纵轴折叠启用：%d 个折叠段", len(fold["ranges"]))
-        except Exception:
-            logger.exception("纵轴折叠计算失败，退回正常轴")
-
-    option = _build_option(dates, assets, expenses, fold)
+    option = _build_option(dates, assets, expenses)
 
     # 每月数据：每月末累计资产 + 每月净结余（可由日数据直接推出）
     monthly_asset = daily["asset"].resample("ME").last()
