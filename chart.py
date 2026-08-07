@@ -52,6 +52,12 @@ COLOR_ASSET = "#FF6B6B"          # 资产折线：珊瑚红
 COLOR_EXPENSE = "rgba(173,216,230,0.55)"  # 支出条形：浅蓝
 COLOR_POS = "#2ecc71"            # 每月结余为正：绿
 COLOR_NEG = "#e74c3c"            # 每月结余为负：红
+COLOR_AVG = "#888888"            # 平均值虚线
+
+
+def _fmt_money(x: float) -> str:
+    """金额 → "¥1,234.56"（千分位 + 两位小数）。"""
+    return f"¥{x:,.2f}"
 
 
 # ---------------------------------------------------------------------------
@@ -177,6 +183,7 @@ def _build_option(
     daily_top: dict,
 ) -> dict:
     """构建完整 ECharts option 字典。"""
+    avg_expense = sum(expenses) / len(expenses) if expenses else 0.0
     y_axis_0 = {
         "type": "value",
         "name": "资产",
@@ -222,6 +229,7 @@ def _build_option(
         "yAxis": [y_axis_0, y_axis_1],
         "series": [
             {
+                "id": "daily-expense",
                 "name": "每日支出",
                 "type": "bar",
                 "yAxisIndex": 1,
@@ -230,6 +238,18 @@ def _build_option(
                 "itemStyle": {"color": COLOR_EXPENSE},
                 "z": 1,
                 "emphasis": {"itemStyle": {"color": "rgba(135,206,235,0.8)"}},
+                "markLine": {
+                    "silent": True,
+                    "symbol": "none",
+                    "lineStyle": {"type": "dashed", "color": COLOR_AVG, "width": 1},
+                    "label": {
+                        "formatter": f"平均值：{_fmt_money(avg_expense)}",
+                        "position": "insideEndTop",
+                        "fontSize": 12,
+                        "color": "#666",
+                    },
+                    "data": [{"yAxis": round(avg_expense, 2)}],
+                },
             },
             {
                 "name": "累计资产",
@@ -273,6 +293,7 @@ def _build_monthly_option(
     """
     max_abs = max(abs(v) for v in nets) if nets else 0.0
     m = max_abs * 1.1 if max_abs > 0 else 1.0  # 右轴 min/max 对称，零点居中
+    avg_net = sum(nets) / len(nets) if nets else 0.0
 
     bar_color = _RawJS(
         f"function(params) {{ return params.value >= 0 ? '{COLOR_POS}' : '{COLOR_NEG}'; }}"
@@ -337,6 +358,7 @@ function(params) {{
         ],
         "series": [
             {
+                "id": "month-net",
                 "name": "每月结余",
                 "type": "bar",
                 "yAxisIndex": 1,
@@ -347,7 +369,19 @@ function(params) {{
                     "silent": True,
                     "symbol": "none",
                     "lineStyle": {"color": "#bbb", "type": "dashed"},
-                    "data": [{"yAxis": 0}],
+                    "data": [
+                        {"yAxis": 0},
+                        {
+                            "yAxis": round(avg_net, 2),
+                            "lineStyle": {"type": "dashed", "color": COLOR_AVG},
+                            "label": {
+                                "formatter": f"平均值：{_fmt_money(avg_net)}",
+                                "position": "insideEndTop",
+                                "fontSize": 12,
+                                "color": "#666",
+                            },
+                        },
+                    ],
                 },
             },
             {
@@ -463,12 +497,72 @@ if (typeof echarts === 'undefined') {{
   document.getElementById('month-start').value = MONTH_PRESETS['1y'];
   document.getElementById('month-end').value = LAST_MONTH;
 
+  // ---- 平均值虚线：随缩放窗口动态重算 ----
+  var DAILY_DATES = OPTION_DAILY.xAxis.data;
+  var MONTH_DATES = OPTION_MONTH.xAxis.data;
+  var DAILY_EXPENSES = OPTION_DAILY.series[0].data;
+  var MONTH_NETS = OPTION_MONTH.series[0].data;
+
+  function fmtAvg(x) {{
+    return '平均值：¥' + Number(x).toLocaleString('zh-CN', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
+  }}
+
+  function visibleRange(chart, labels) {{
+    // 从当前 dataZoom 状态取可见窗口 [s, e]。
+    // 类目轴上 ECharts 会把 startValue/endValue 归一化成类目索引，
+    // 直接 Number() 即可；缺失/非法时回退到百分比换算。
+    var dz = chart.getOption().dataZoom[0];
+    var n = labels.length;
+    var s = -1, e = -1;
+    if (dz && dz.startValue != null && dz.endValue != null) {{
+      s = Number(dz.startValue);
+      e = Number(dz.endValue);
+    }}
+    if (isNaN(s) || isNaN(e) || s < 0 || e < 0) {{
+      s = Math.round(dz.start / 100 * (n - 1));
+      e = Math.round(dz.end / 100 * (n - 1));
+    }}
+    s = Math.max(0, Math.min(n - 1, s));
+    e = Math.max(0, Math.min(n - 1, e));
+    return [s, e];
+  }}
+
+  function avgOf(data, s, e) {{
+    var sum = 0, cnt = 0;
+    for (var i = s; i <= e; i++) {{ sum += data[i] || 0; cnt++; }}
+    return cnt ? sum / cnt : 0;
+  }}
+
+  function updateDailyAvg() {{
+    var r = visibleRange(chartDaily, DAILY_DATES);
+    var avg = avgOf(DAILY_EXPENSES, r[0], r[1]);
+    chartDaily.setOption({{ series: [{{ id: 'daily-expense', markLine: {{
+      data: [{{ yAxis: avg, label: {{ formatter: fmtAvg(avg) }} }}]
+    }} }}] }});
+  }}
+
+  function updateMonthAvg() {{
+    var r = visibleRange(chartMonth, MONTH_DATES);
+    var avg = avgOf(MONTH_NETS, r[0], r[1]);
+    chartMonth.setOption({{ series: [{{ id: 'month-net', markLine: {{
+      data: [
+        {{ yAxis: 0 }},
+        {{ yAxis: avg, label: {{ formatter: fmtAvg(avg) }} }}
+      ]
+    }} }}] }});
+  }}
+
   function zoomTo(chart, start, end) {{
     chart.setOption({{ dataZoom: [
       {{ startValue: start, endValue: end }},
       {{ startValue: start, endValue: end }}
     ] }});
+    updateDailyAvg();
+    updateMonthAvg();
   }}
+
+  chartDaily.on('datazoom', updateDailyAvg);
+  chartMonth.on('datazoom', updateMonthAvg);
 
   // 主图（每日资产）时间段
   function setRange(name) {{
