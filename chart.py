@@ -128,9 +128,10 @@ def _ensure_echarts_js() -> str:
 # 构建 option 字典
 # ---------------------------------------------------------------------------
 
-def _tooltip_js(real_assets: list[float]) -> str:
-    """生成 tooltip formatter：按 dataIndex 查真实资产，显示 日期/资产/支出。"""
+def _tooltip_js(real_assets: list[float], daily_top: dict) -> str:
+    """生成 tooltip formatter：日期/资产/支出 + 当日支出 Top N 明细。"""
     assets_json = json.dumps(real_assets)
+    top_json = json.dumps(daily_top, ensure_ascii=False)
     return f"""
 function(params) {{
     var p = params.find(function(sp) {{ return sp.seriesName === '累计资产'; }});
@@ -140,12 +141,31 @@ function(params) {{
     var expense = 0;
     var bar = params.find(function(sp) {{ return sp.seriesName === '每日支出'; }});
     if (bar) expense = bar.value || 0;
-    var fmt = function(x) {{
+    var fmt2 = function(x) {{
         return Number(x).toLocaleString('zh-CN', {{minimumFractionDigits: 2, maximumFractionDigits: 2}});
     }};
-    return '<div style="font-size:14px;font-weight:bold;margin-bottom:4px">' + p.axisValue + '</div>'
-        + '<div>资产: <span style="color:{COLOR_ASSET};font-weight:bold">¥' + fmt(asset) + '</span></div>'
-        + '<div>支出: <span style="color:#87CEEB">¥' + fmt(expense) + '</span></div>';
+    var fmt0 = function(x) {{
+        return Number(x).toLocaleString('zh-CN', {{minimumFractionDigits: 0, maximumFractionDigits: 2}});
+    }};
+    var html = '<div style="font-size:14px;font-weight:bold;margin-bottom:4px">' + p.axisValue + '</div>'
+        + '<div>资产: <span style="color:{COLOR_ASSET};font-weight:bold">¥' + fmt2(asset) + '</span></div>'
+        + '<div>支出: <span style="color:#87CEEB;font-weight:bold">¥' + fmt2(expense) + '</span></div>';
+    var top = {top_json};
+    var items = top[p.axisValue] || [];
+    if (items.length > 0) {{
+        html += '<div style="margin:6px 0 2px;padding-top:5px;border-top:1px solid #e8e8e8;font-size:12px;color:#999;">--- Top ' + items.length + ' ---</div>';
+        for (var i = 0; i < items.length; i++) {{
+            var it = items[i];
+            var parts = [it.c1, it.c2, it.n];
+            var cat = '';
+            if (parts.some(function(x) {{ return x; }})) cat = parts.join('-');
+            html += '<div style="font-size:12px;color:#555;padding-top:2px;white-space:nowrap;">'
+                + (i + 1) + '. <span style="font-weight:bold">¥' + fmt0(it.a) + '</span> ' + cat + '</div>';
+        }}
+    }} else if (expense <= 0) {{
+        html += '<div style="margin-top:6px;padding-top:4px;border-top:1px solid #e8e8e8;font-size:12px;color:#aaa;">当日无支出</div>';
+    }}
+    return html;
 }}
 """
 
@@ -154,6 +174,7 @@ def _build_option(
     dates: list[str],
     assets: list[float],
     expenses: list[float],
+    daily_top: dict,
 ) -> dict:
     """构建完整 ECharts option 字典。"""
     y_axis_0 = {
@@ -183,7 +204,7 @@ def _build_option(
             "borderWidth": 1,
             "padding": [10, 14],
             "textStyle": {"color": "#333"},
-            "formatter": _RawJS(_tooltip_js(assets)),
+            "formatter": _RawJS(_tooltip_js(assets, daily_top)),
         },
         "legend": {"data": ["累计资产", "每日支出"], "top": 35, "textStyle": {"color": "#222"}},
         "grid": {"left": "3%", "right": "4%", "bottom": "15%", "top": "18%", "containLabel": True},
@@ -498,11 +519,12 @@ if (typeof echarts === 'undefined') {{
 # 对外入口
 # ---------------------------------------------------------------------------
 
-def build_html(daily: pd.DataFrame) -> Path:
+def build_html(daily: pd.DataFrame, daily_top: dict | None = None) -> Path:
     """构建图表 HTML 并写入 output/chart.html，返回文件路径。"""
     if daily.empty:
         logger.warning("无数据可展示")
         return OUTPUT_FILE
+    daily_top = daily_top or {}
 
     dates = [d.strftime("%Y-%m-%d") for d in daily.index]
     assets = [round(float(v), 2) for v in daily["asset"]]
@@ -515,7 +537,7 @@ def build_html(daily: pd.DataFrame) -> Path:
     for key, days in PRESET_DAYS.items():
         presets[key] = (max_dt - timedelta(days=days)).strftime("%Y-%m-%d")
 
-    option = _build_option(dates, assets, expenses)
+    option = _build_option(dates, assets, expenses, daily_top)
 
     # 每月数据：每月末累计资产 + 每月净结余（可由日数据直接推出）
     monthly_asset = daily["asset"].resample("ME").last()

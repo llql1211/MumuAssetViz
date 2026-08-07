@@ -35,3 +35,35 @@ def aggregate(detail: pd.DataFrame) -> pd.DataFrame:
     )
     daily.index.name = "date"
     return daily
+
+
+def build_daily_top_expenses(detail: pd.DataFrame, n: int = 3) -> dict[str, list[dict]]:
+    """按天取支出金额 Top N 明细，供悬停提示框展示。
+
+    只统计 type=="支出" 的行，按 |amount| 从大到小取前 n 条；
+    同一天不足 n 条时有多少返回多少。
+
+    返回：{"2021-02-12": [{"a": 4300.0, "c1": "购物", "c2": "数码", "n": "手机"}, ...], ...}
+    - a   支出金额（正数）
+    - c1  一级分类，c2 二级分类，n 备注（可能为空字符串）
+    - key 为 "%Y-%m-%d"，与图表横轴日期对齐。
+    """
+    if detail.empty:
+        return {}
+    expenses = detail[detail["type"] == "支出"].copy()
+    expenses["a"] = -expenses["amount"].astype(float)  # 支出为负 → 取正
+    result: dict[str, list[dict]] = {}
+    for date, group in expenses.groupby("date"):
+        top = group.nlargest(n, "a")
+        items = []
+        for _, row in top.iterrows():
+            items.append(
+                {
+                    "a": round(float(row["a"]), 2),
+                    "c1": str(row.get("cat1", "") or ""),
+                    "c2": str(row.get("cat2", "") or ""),
+                    "n": str(row.get("note", "") or ""),
+                }
+            )
+        result[date.strftime("%Y-%m-%d")] = items
+    return result

@@ -19,7 +19,7 @@ CACHE_DIR = Path(__file__).parent / "cache"
 CACHE_FILE = CACHE_DIR / "daily.pkl"
 
 # 解析/聚合逻辑版本号；变更逻辑时 +1，强制重建缓存
-CACHE_VERSION = 3
+CACHE_VERSION = 4
 
 
 def _file_key(path: Path) -> dict:
@@ -48,18 +48,18 @@ def cache_valid(path: Path) -> bool:
     return payload.get("meta") == _file_key(path)
 
 
-def load_cache(path: Path) -> pd.DataFrame | None:
-    """命中返回按天序列，未命中返回 None。"""
+def load_cache(path: Path) -> tuple[pd.DataFrame, dict] | None:
+    """命中返回 (按天序列, 每日支出TopN)，未命中返回 None。"""
     if not cache_valid(path):
         return None
     payload = _read_payload()
     logger.info("命中缓存：%s", path.name)
-    return payload["data"]
+    return payload["data"], payload.get("daily_top", {})
 
 
-def save_cache(path: Path, daily: pd.DataFrame) -> None:
+def save_cache(path: Path, daily: pd.DataFrame, daily_top: dict) -> None:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    payload = {"meta": _file_key(path), "data": daily}
+    payload = {"meta": _file_key(path), "data": daily, "daily_top": daily_top}
     with open(CACHE_FILE, "wb") as f:
         pickle.dump(payload, f)
     logger.info("已写入缓存：%s", CACHE_FILE)

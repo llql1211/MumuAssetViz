@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import webbrowser
 
-from aggregate import aggregate
+from aggregate import aggregate, build_daily_top_expenses
 from cache import load_cache, save_cache
 from chart import build_html
 from parse import find_xlsx, parse_xlsx
@@ -17,11 +17,14 @@ logger = logging.getLogger("main")
 def main() -> None:
     xlsx = find_xlsx()
 
-    daily = load_cache(xlsx)
-    if daily is None:
+    cached = load_cache(xlsx)
+    if cached is None:
         detail = parse_xlsx(xlsx)
         daily = aggregate(detail)
-        save_cache(xlsx, daily)
+        daily_top = build_daily_top_expenses(detail)
+        save_cache(xlsx, daily, daily_top)
+    else:
+        daily, daily_top = cached
 
     # 摘要
     print(f"文件：{xlsx.name}")
@@ -30,7 +33,7 @@ def main() -> None:
     print(f"总支出：{daily['expense'].sum():,.2f}")
 
     # 生成图表并打开
-    html_path = build_html(daily)
+    html_path = build_html(daily, daily_top)
     webbrowser.open(html_path.absolute().as_uri())
     logger.info("浏览器已打开，如果未弹出请手动打开：%s", html_path)
 

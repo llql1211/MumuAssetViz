@@ -19,6 +19,14 @@ INPUT_DIR = Path(__file__).parent / "input"
 COUNTED_TYPES = {"收入", "支出"}
 IGNORED_TYPES = {"转账"}
 
+# 可选列：xlsx 里有则保留（用于悬停详情），缺失补空字符串。
+# 值是可接受的表头名（部分账单用「分类」，部分用「一级分类」）。
+OPTIONAL_COLS = {
+    "cat1": ("一级分类", "分类"),
+    "cat2": ("二级分类",),
+    "note": ("备注",),
+}
+
 
 def find_xlsx(input_dir: Path = INPUT_DIR) -> Path:
     """在 input_dir 下查找唯一的 xlsx 文件。
@@ -38,11 +46,12 @@ def find_xlsx(input_dir: Path = INPUT_DIR) -> Path:
 
 
 def parse_xlsx(path: Path) -> pd.DataFrame:
-    """读取 xlsx，返回逐条明细 DataFrame（列：date, type, amount）。
+    """读取 xlsx，返回逐条明细 DataFrame（列：date, type, amount[, cat1, cat2, note]）。
 
     - 时间只取日期部分（"2021-02-12 20:05" → date）；
     - 类型 收入/支出 计入，转账跳过，其他类型告警并跳过；
-    - 金额转 float，支出为负；无效值告警并跳过该行。
+    - 金额转 float，支出为负；无效值告警并跳过该行；
+    - 可选列 一级分类/二级分类/备注：存在则保留为 cat1/cat2/note，缺失补空字符串。
     """
     df = pd.read_excel(path, engine="openpyxl")
     missing = {"时间", "类型", "金额"} - set(df.columns)
@@ -85,5 +94,10 @@ def parse_xlsx(path: Path) -> pd.DataFrame:
             "amount": amounts[keep].astype(float),
         }
     )
+    # 可选列：存在则保留，缺失补空字符串（悬停 Top N 详情用）
+    for en, candidates in OPTIONAL_COLS.items():
+        cn = next((c for c in candidates if c in df.columns), None)
+        vals = df[cn] if cn else pd.Series("", index=df.index)
+        detail[en] = vals.fillna("").astype(str).str.strip()[keep]
     # 防御性：显式按日期排序，不依赖文件内的排列顺序
     return detail.sort_values("date").reset_index(drop=True)
