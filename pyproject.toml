@@ -1,0 +1,12 @@
+[project]
+name = "MumuAssetViz"
+version = "0.1.0"
+authors = [
+    {name = "llql1211", email = "1390116067@qq.com"}
+]
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "pandas>=3.0.5,<4",
+    "pyecharts>=2.1.0,<3",
+    "openpyxl>=3.1.5,<4",
+]
