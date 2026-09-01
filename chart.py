@@ -681,6 +681,19 @@ if (typeof echarts === 'undefined') {{
     zoomTo(chartMonth, r[0], r[1]);
   }}
 
+  // 浏览器尺寸 / 缩放级别变化时，图表跟随容器重绘（rAF 合并高频事件）
+  var resizePending = false;
+  function resizeCharts() {{
+    if (resizePending) return;
+    resizePending = true;
+    requestAnimationFrame(function() {{
+      resizePending = false;
+      chartDaily.resize();
+      chartMonth.resize();
+    }});
+  }}
+  window.addEventListener('resize', resizeCharts);
+
   // 初始视图：主图全部、月图近1年
   setRange('all');
   setRangeMonth('1y');
