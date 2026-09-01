@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import urllib.request
 from datetime import timedelta
 from pathlib import Path
@@ -58,6 +59,31 @@ COLOR_AVG = "#888888"            # 平均值虚线
 def _fmt_money(x: float) -> str:
     """金额 → "¥1,234.56"（千分位 + 两位小数）。"""
     return f"¥{x:,.2f}"
+
+
+def _nice_ceil(x: float) -> float:
+    """向上取整到 {1,2,5}×10^k 中最小的那个（x>0）。
+
+    例：1090.4 → 2000，0.64 → 1.0。
+    """
+    exp = 10 ** math.floor(math.log10(x))
+    for f in (1, 2, 5):
+        if f * exp >= x:
+            return f * exp
+    return 10 * exp
+
+
+def _nice_symmetric_axis(max_abs: float) -> tuple[float, float]:
+    """把对称轴（min=-M, max=+M）的上限 M 与刻度步长都算成整数。
+
+    例：max_abs=5452 → (6000, 2000)，刻度为 -6000/-4000/-2000/0/2000/4000/6000。
+    正半轴约 3~4 个区间，端点不会再出现 5997.21 这种小数。
+    """
+    if max_abs <= 0:
+        return 1.0, 1.0
+    step = _nice_ceil(max_abs / 5)
+    bound = math.ceil(max_abs / step) * step
+    return bound, step
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +217,7 @@ def _build_option(
         "type": "value",
         "name": "资产",
         "position": "left",
+        "minInterval": 1,  # 刻度尽量整数
         "splitLine": {"lineStyle": {"type": "dashed", "color": "#eee"}},
         "nameTextStyle": {"fontSize": 12},
     }
@@ -201,6 +228,7 @@ def _build_option(
         "type": "value",
         "name": "支出",
         "position": "right",
+        "minInterval": 1,  # 刻度尽量整数
         "splitLine": {"show": False},
         "axisLabel": {"color": "#aaa", "fontSize": 10},
         "nameTextStyle": {"fontSize": 12},
@@ -295,7 +323,8 @@ def _build_monthly_option(
     - 每月末累计资产：折线，走独立左轴，避免被结余量级压扁。
     """
     max_abs = max(abs(v) for v in nets) if nets else 0.0
-    m = max_abs * 1.1 if max_abs > 0 else 1.0  # 右轴 min/max 对称，零点居中
+    # 右轴 min/max 对称、零点居中，且上限/步长取整数，刻度好看（0/2000/4000/6000）
+    bound, step = _nice_symmetric_axis(max_abs)
     avg_net = sum(nets) / len(nets) if nets else 0.0
 
     bar_color = _RawJS(
@@ -345,6 +374,7 @@ function(params) {{
                 "type": "value",
                 "name": "累计资产",
                 "position": "left",
+                "minInterval": 1,  # 刻度尽量整数
                 "splitLine": {"lineStyle": {"type": "dashed", "color": "#eee"}},
                 "nameTextStyle": {"fontSize": 12},
             },
@@ -352,8 +382,9 @@ function(params) {{
                 "type": "value",
                 "name": "每月结余",
                 "position": "right",
-                "min": -m,
-                "max": m,
+                "min": -bound,
+                "max": bound,
+                "interval": step,
                 "splitLine": {"show": False},
                 "axisLabel": {"fontSize": 10},
                 "nameTextStyle": {"fontSize": 12},
