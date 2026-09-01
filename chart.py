@@ -153,6 +153,9 @@ function(params) {{
     var fmt0 = function(x) {{
         return Number(x).toLocaleString('zh-CN', {{minimumFractionDigits: 0, maximumFractionDigits: 2}});
     }};
+    var esc = function(s) {{
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }};
     var html = '<div style="font-size:14px;font-weight:bold;margin-bottom:4px">' + p.axisValue + '</div>'
         + '<div>资产: <span style="color:{COLOR_ASSET};font-weight:bold">¥' + fmt2(asset) + '</span></div>'
         + '<div>支出: <span style="color:#87CEEB;font-weight:bold">¥' + fmt2(expense) + '</span></div>';
@@ -165,7 +168,7 @@ function(params) {{
             var parts = [it.c1, it.c2, it.n];
             var cat = '';
             if (parts.some(function(x) {{ return x; }})) cat = parts.join('-');
-            html += '<div style="font-size:12px;color:#555;padding-top:2px;white-space:nowrap;">'
+            html += '<div style="font-size:12px;color:#555;padding-top:2px;max-width:360px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="' + esc(cat) + '">'
                 + (i + 1) + '. <span style="font-weight:bold">¥' + fmt0(it.a) + '</span> ' + cat + '</div>';
         }}
     }} else if (expense <= 0) {{
