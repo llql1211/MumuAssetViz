@@ -446,12 +446,12 @@ _TEMPLATE = """<!DOCTYPE html>
   <h2 style="font-size:17px;text-align:center;color:#333;margin-bottom:6px;">每日变化</h2>
   <p style="font-size:12px;text-align:center;color:#999;margin:0 0 10px;">可以点击图例按钮隐藏曲线</p>
   <div class="controls" data-chart="daily">
-    <button data-range="all" class="active" onclick="setRange('all')">全部</button>
+    <button data-range="all" onclick="setRange('all')">全部</button>
     <span class="sep">|</span>
     <button data-range="1m" onclick="setRange('1m')">近1月</button>
     <button data-range="3m" onclick="setRange('3m')">近3月</button>
     <button data-range="6m" onclick="setRange('6m')">近6月</button>
-    <button data-range="1y" onclick="setRange('1y')">近1年</button>
+    <button data-range="1y" class="active" onclick="setRange('1y')">近1年</button>
     <button data-range="3y" onclick="setRange('3y')">近3年</button>
     <span class="sep">|</span>
     <span style="font-size:13px;color:#666;">自定义</span>
@@ -697,8 +697,8 @@ if (typeof echarts === 'undefined') {{
   }}
   window.addEventListener('resize', resizeCharts);
 
-  // 初始视图：主图全部、月图近1年
-  setRange('all');
+  // 初始视图：主图、月图均默认近1年
+  setRange('1y');
   setRangeMonth('1y');
 }}
 </script>
