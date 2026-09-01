@@ -2,8 +2,8 @@
 
 - 主折线（累计资产）+ 浅色条形（每日支出，独立右轴，锚定横轴上方）
 - 悬停竖虚线 / 大圆点 / 文本框（日期 + 资产 + 支出）
-- 时间段预设按钮（全部/近1月/3月/6月/1年）+ 自定义日期区间
-- 纵轴折叠：异常跳跃段压缩为窄带，axisLabel 反函数还原真实值
+- 时间段：全部 / 近N月近N年预设 / 自定义日期区间 / 按年筛选 / 按月筛选
+- 平均值虚线：随当前缩放窗口动态重算
 
 实现：手工构建 ECharts option 字典（可完全控制交互细节），
 用 PyECharts 的 render_embed() 生成可嵌入的 div+script，再套进自定义模板。
@@ -433,8 +433,8 @@ _TEMPLATE = """<!DOCTYPE html>
   .controls button {{ padding: 5px 14px; border: 1px solid #d0d0d0; border-radius: 6px; background: #fff; cursor: pointer; font-size: 13px; transition: all 0.15s; }}
   .controls button:hover {{ background: #e8f4fd; border-color: #87CEEB; }}
   .controls button.active {{ background: {color_asset}; color: #fff; border-color: {color_asset}; }}
-  .controls input[type="date"], .controls input[type="month"] {{ padding: 4px 8px; border: 1px solid #d0d0d0; border-radius: 6px; font-size: 13px; }}
-  .controls input[type="date"]:focus, .controls input[type="month"]:focus {{ outline: none; border-color: #87CEEB; }}
+  .controls input[type="date"], .controls input[type="month"], .controls select {{ padding: 4px 8px; border: 1px solid #d0d0d0; border-radius: 6px; font-size: 13px; background: #fff; }}
+  .controls input[type="date"]:focus, .controls input[type="month"]:focus, .controls select:focus {{ outline: none; border-color: #87CEEB; }}
   #chart, #chart_month {{ width: 100%; height: 600px; }}
 </style>
 </head>
@@ -455,6 +455,11 @@ _TEMPLATE = """<!DOCTYPE html>
     <input type="date" id="date-start" title="开始日期">
     <input type="date" id="date-end" title="结束日期">
     <button onclick="applyCustomDaily()">应用</button>
+    <span class="sep">|</span>
+    <span style="font-size:13px;color:#666;">按年</span>
+    <select id="year-daily" onchange="applyYearDaily(this.value)">{year_options_daily}</select>
+    <span style="font-size:13px;color:#666;">按月</span>
+    <input type="month" id="month-daily" title="选择年份+月份" onchange="applyMonthDaily(this.value)">
   </div>
   <div id="chart"></div>
 
@@ -472,6 +477,9 @@ _TEMPLATE = """<!DOCTYPE html>
     <input type="month" id="month-start" title="开始月份">
     <input type="month" id="month-end" title="结束月份">
     <button onclick="applyCustomMonth()">应用</button>
+    <span class="sep">|</span>
+    <span style="font-size:13px;color:#666;">按年</span>
+    <select id="year-month" onchange="applyYearMonth(this.value)">{year_options_month}</select>
   </div>
   <div id="chart_month"></div>
 </div>
@@ -565,10 +573,19 @@ if (typeof echarts === 'undefined') {{
   chartMonth.on('datazoom', updateMonthAvg);
 
   // 主图（每日资产）时间段
+  function deactivateDaily() {{
+    document.querySelectorAll('.controls[data-chart="daily"] button[data-range]').forEach(function(b) {{
+      b.classList.remove('active');
+    }});
+  }}
+
   function setRange(name) {{
+    deactivateDaily();
     document.querySelectorAll('.controls[data-chart="daily"] button[data-range]').forEach(function(b) {{
       b.classList.toggle('active', b.dataset.range === name);
     }});
+    document.getElementById('year-daily').value = '';
+    document.getElementById('month-daily').value = '';
     zoomTo(chartDaily, PRESETS[name], MAX_DATE);
   }}
 
@@ -576,17 +593,63 @@ if (typeof echarts === 'undefined') {{
     var s = document.getElementById('date-start').value;
     var e = document.getElementById('date-end').value;
     if (!s || !e) return;
-    document.querySelectorAll('.controls[data-chart="daily"] button[data-range]').forEach(function(b) {{
-      b.classList.remove('active');
-    }});
+    deactivateDaily();
+    document.getElementById('year-daily').value = '';
+    document.getElementById('month-daily').value = '';
     zoomTo(chartDaily, s, e);
   }}
 
+  // 按年 / 按月：在类目序列里按前缀找该年/月覆盖的实际首尾日期，边界自动收口到数据范围
+  function dailyRangeForYear(y) {{
+    var first = null, last = null;
+    for (var i = 0; i < DAILY_DATES.length; i++) {{
+      if (DAILY_DATES[i].indexOf(y + '-') === 0) {{
+        if (first === null) first = DAILY_DATES[i];
+        last = DAILY_DATES[i];
+      }}
+    }}
+    return [first, last];
+  }}
+  function dailyRangeForMonth(ym) {{
+    var first = null, last = null;
+    for (var i = 0; i < DAILY_DATES.length; i++) {{
+      if (DAILY_DATES[i].indexOf(ym + '-') === 0) {{
+        if (first === null) first = DAILY_DATES[i];
+        last = DAILY_DATES[i];
+      }}
+    }}
+    return [first, last];
+  }}
+  function applyYearDaily(y) {{
+    if (!y) return;
+    var r = dailyRangeForYear(y);
+    if (!r[0]) return;
+    deactivateDaily();
+    document.getElementById('month-daily').value = '';
+    zoomTo(chartDaily, r[0], r[1]);
+  }}
+  function applyMonthDaily(ym) {{
+    if (!ym) return;
+    var r = dailyRangeForMonth(ym);
+    if (!r[0]) return;
+    deactivateDaily();
+    document.getElementById('year-daily').value = '';
+    zoomTo(chartDaily, r[0], r[1]);
+  }}
+
   // 月图（每月结余）时间段
+  function deactivateMonth() {{
+    document.querySelectorAll('.controls[data-chart="month"] button[data-range]').forEach(function(b) {{
+      b.classList.remove('active');
+    }});
+  }}
+
   function setRangeMonth(name) {{
+    deactivateMonth();
     document.querySelectorAll('.controls[data-chart="month"] button[data-range]').forEach(function(b) {{
       b.classList.toggle('active', b.dataset.range === name);
     }});
+    document.getElementById('year-month').value = '';
     zoomTo(chartMonth, MONTH_PRESETS[name], LAST_MONTH);
   }}
 
@@ -594,10 +657,28 @@ if (typeof echarts === 'undefined') {{
     var s = document.getElementById('month-start').value;
     var e = document.getElementById('month-end').value;
     if (!s || !e) return;
-    document.querySelectorAll('.controls[data-chart="month"] button[data-range]').forEach(function(b) {{
-      b.classList.remove('active');
-    }});
+    deactivateMonth();
+    document.getElementById('year-month').value = '';
     zoomTo(chartMonth, s, e);
+  }}
+
+  // 按年：在类目序列里按前缀找该年覆盖的实际首尾月份，边界自动收口到数据范围
+  function monthRangeForYear(y) {{
+    var first = null, last = null;
+    for (var i = 0; i < MONTH_DATES.length; i++) {{
+      if (MONTH_DATES[i].indexOf(y + '-') === 0) {{
+        if (first === null) first = MONTH_DATES[i];
+        last = MONTH_DATES[i];
+      }}
+    }}
+    return [first, last];
+  }}
+  function applyYearMonth(y) {{
+    if (!y) return;
+    var r = monthRangeForYear(y);
+    if (!r[0]) return;
+    deactivateMonth();
+    zoomTo(chartMonth, r[0], r[1]);
   }}
 
   // 初始视图：主图全部、月图近1年
@@ -653,6 +734,15 @@ def build_html(daily: pd.DataFrame, daily_top: dict | None = None) -> Path:
     option_daily = _dump_option(option)
     option_month = _dump_option(option_month)
 
+    # 按年筛选：日图/月图分别按各自横轴序列提取覆盖到的年份，生成 <option>
+    def _year_options(years: list[str]) -> str:
+        return '<option value="">按年…</option>' + "".join(
+            f'<option value="{y}">{y}</option>' for y in years
+        )
+
+    year_options_daily = _year_options(sorted({d[:4] for d in dates}))
+    year_options_month = _year_options(sorted({m[:4] for m in months}))
+
     html = _TEMPLATE.format(
         echarts_src=_ensure_echarts_js(),
         presets=json.dumps(presets, ensure_ascii=False),
@@ -662,6 +752,8 @@ def build_html(daily: pd.DataFrame, daily_top: dict | None = None) -> Path:
         option_daily=option_daily,
         option_month=option_month,
         color_asset=COLOR_ASSET,
+        year_options_daily=year_options_daily,
+        year_options_month=year_options_month,
     )
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)  # _ensure_echarts_js 也会建，保持幂等
