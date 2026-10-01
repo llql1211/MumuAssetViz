@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import os
 import urllib.request
 from datetime import timedelta
 from pathlib import Path
@@ -21,6 +22,8 @@ from pathlib import Path
 import pandas as pd
 from pyecharts.commons.utils import JsCode  # noqa: F401  # 保留 pyecharts 依赖引用
 from pyecharts.globals import CurrentConfig
+
+from app.paths import ECHARTS_JS, OUTPUT_FILE
 
 # ---- 自控序列化：不依赖 pyecharts JsCode 的内部格式 ----
 
@@ -33,14 +36,8 @@ class _RawJS:
 
 logger = logging.getLogger(__name__)
 
-OUTPUT_DIR = Path(__file__).parent / "output"
-OUTPUT_FILE = OUTPUT_DIR / "chart.html"
-
-# 优先使用项目内打包的 echarts.min.js（随仓库提交，运行时零下载）
-ASSETS_DIR = Path(__file__).parent / "assets"
-BUNDLED_ECHARTS = ASSETS_DIR / "echarts.min.js"
-# 页面在 output/chart.html，指向 assets/echarts.min.js 的相对路径
-BUNDLED_ECHARTS_SRC = "../assets/echarts.min.js"
+# echarts.min.js 小于此大小视为残缺（正常约 1MB）
+MIN_ECHARTS_SIZE = 100_000
 
 # ---- 时间段预设 ----
 # 主图（每日资产）：相对最新日期的天数
@@ -120,40 +117,55 @@ def _dump_option(option: dict) -> str:
 # echarts.min.js 本地化
 # ---------------------------------------------------------------------------
 
-def _ensure_echarts_js() -> str:
-    """返回页面引用的 echarts.min.js 路径。
+def _echarts_ok(path: Path) -> bool:
+    """文件存在且大小正常，才算可用（防止 0 字节的下载残留下次被当成可用）。"""
+    return path.is_file() and path.stat().st_size > MIN_ECHARTS_SIZE
 
-    优先级：项目内打包的 assets/echarts.min.js → output/ 下已下载的副本
-    → 运行时下载。仅当前两者都不存在才下载，且成功后落盘，下次直接复用。
-    """
-    if BUNDLED_ECHARTS.exists() and BUNDLED_ECHARTS.stat().st_size > 100_000:
-        return BUNDLED_ECHARTS_SRC
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    local = OUTPUT_DIR / "echarts.min.js"
-    if local.exists() and local.stat().st_size > 100_000:
-        return "echarts.min.js"
-
+def _download_echarts(dest: Path) -> bool:
+    """下载 echarts.min.js 到 dest。先写临时文件再原子替换，失败不留残缺文件。"""
     candidates = [
         CurrentConfig.ONLINE_HOST + "echarts.min.js",
         "https://cdn.bootcdn.net/ajax/libs/echarts/5.5.1/echarts.min.js",
         "https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js",
         "https://unpkg.com/echarts@5.5.1/dist/echarts.min.js",
     ]
+    tmp = dest.with_name(dest.name + ".tmp")
     for url in candidates:
+        logger.info("下载 echarts.min.js：%s", url)
         try:
-            logger.info("下载 echarts.min.js：%s", url)
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=15) as resp, open(local, "wb") as f:
+            with urllib.request.urlopen(req, timeout=15) as resp, open(tmp, "wb") as f:
                 f.write(resp.read())
-            if local.exists() and local.stat().st_size > 100_000:
-                logger.info("echarts.min.js 已下载到本地，此后离线可用")
-                return "echarts.min.js"
+            if not _echarts_ok(tmp):
+                raise ValueError(f"下载内容不完整（{tmp.stat().st_size} 字节）")
         except Exception as e:
             logger.warning("源 %s 下载失败：%s", url, e)
+            tmp.unlink(missing_ok=True)
             continue
-    logger.warning("所有 echarts.min.js 下载源均失败，页面将尝试从 CDN 加载")
-    return candidates[0]
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(tmp, dest)
+        logger.info("已保存到 %s，此后离线可用", dest)
+        return True
+    return False
+
+
+def _ensure_echarts_js() -> str:
+    """返回页面 <script src> 要填的值。
+
+    优先用随仓库提交的 assets/echarts.min.js（运行时零下载）；缺失或残缺时才
+    下载并落盘到同一位置。返回相对页面所在目录的路径，页面换位置也不失效；
+    彻底拿不到时才回退 CDN（离线会白屏，但至少有明确日志）。
+    """
+    if not _echarts_ok(ECHARTS_JS):
+        logger.warning("缺少 assets/echarts.min.js，尝试下载")
+        _download_echarts(ECHARTS_JS)
+
+    if _echarts_ok(ECHARTS_JS):
+        return os.path.relpath(ECHARTS_JS, OUTPUT_FILE.parent).replace(os.sep, "/")
+
+    logger.warning("echarts.min.js 不可用，页面将回退到 CDN 加载")
+    return CurrentConfig.ONLINE_HOST + "echarts.min.js"
 
 
 # ---------------------------------------------------------------------------
@@ -527,7 +539,7 @@ var OPTION_MONTH = {option_month};
 
 if (typeof echarts === 'undefined') {{
   var el = document.getElementById('chart');
-  if (el) el.innerHTML = '<div style="padding:60px 20px;text-align:center;color:#c0392b;font-size:15px;">⚠ echarts.min.js 加载失败：请检查网络，或将 echarts.min.js 手动放入 output/ 目录后刷新页面</div>';
+  if (el) el.innerHTML = '<div style="padding:60px 20px;text-align:center;color:#c0392b;font-size:15px;">⚠ echarts.min.js 加载失败：请检查网络，或把 echarts.min.js 放到项目的 assets/ 目录后刷新页面</div>';
 }} else {{
   var chartDaily = echarts.init(document.getElementById('chart'));
   var chartMonth = echarts.init(document.getElementById('chart_month'));
@@ -742,7 +754,7 @@ if (typeof echarts === 'undefined') {{
 # ---------------------------------------------------------------------------
 
 def build_html(daily: pd.DataFrame, daily_top: dict | None = None) -> Path:
-    """构建图表 HTML 并写入 output/chart.html，返回文件路径。"""
+    """构建图表 HTML 并写入 data/output.html，返回文件路径。"""
     if daily.empty:
         logger.warning("无数据可展示")
         return OUTPUT_FILE
@@ -803,7 +815,7 @@ def build_html(daily: pd.DataFrame, daily_top: dict | None = None) -> Path:
         year_options_month=year_options_month,
     )
 
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)  # _ensure_echarts_js 也会建，保持幂等
+    OUTPUT_FILE.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT_FILE.write_text(html, encoding="utf-8")
     logger.info("图表已生成：%s", OUTPUT_FILE)
     return OUTPUT_FILE

@@ -13,10 +13,9 @@ from pathlib import Path
 
 import pandas as pd
 
-logger = logging.getLogger(__name__)
+from app.paths import CACHE_FILE
 
-CACHE_DIR = Path(__file__).parent / "cache"
-CACHE_FILE = CACHE_DIR / "daily.pkl"
+logger = logging.getLogger(__name__)
 
 # 解析/聚合逻辑版本号；变更逻辑时 +1，强制重建缓存
 CACHE_VERSION = 4
@@ -58,7 +57,7 @@ def load_cache(path: Path) -> tuple[pd.DataFrame, dict] | None:
 
 
 def save_cache(path: Path, daily: pd.DataFrame, daily_top: dict) -> None:
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
     payload = {"meta": _file_key(path), "data": daily, "daily_top": daily_top}
     with open(CACHE_FILE, "wb") as f:
         pickle.dump(payload, f)

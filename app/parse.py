@@ -2,6 +2,7 @@
 
 只关心 时间/类型/金额 三列，其余忽略。
 解析产物是逐条明细（不合并），聚合逻辑在 aggregate.py。
+输入目录见 paths.INPUT_DIR。
 """
 
 from __future__ import annotations
@@ -11,9 +12,9 @@ from pathlib import Path
 
 import pandas as pd
 
-logger = logging.getLogger(__name__)
+from app.paths import INPUT_DIR
 
-INPUT_DIR = Path(__file__).parent / "input"
+logger = logging.getLogger(__name__)
 
 # 仅 收入/支出 计入资产；"转账" 忽略；其他类型告警并忽略
 COUNTED_TYPES = {"收入", "支出"}
@@ -35,11 +36,11 @@ def find_xlsx(input_dir: Path = INPUT_DIR) -> Path:
     """
     files = sorted(input_dir.glob("*.xlsx"))
     if not files:
-        raise FileNotFoundError(f"input/ 下没有找到 xlsx 文件，请放入账单文件：{input_dir}")
+        raise FileNotFoundError(f"没有找到 xlsx 账单，请放入：{input_dir}")
     if len(files) > 1:
         names = "\n  ".join(f.name for f in files)
         raise ValueError(
-            f"input/ 下找到 {len(files)} 个 xlsx 文件，请手动删除到只剩一个。\n"
+            f"{input_dir} 下有 {len(files)} 个 xlsx 文件，请手动删除到只剩一个。\n"
             f"当前文件：\n  {names}"
         )
     return files[0]

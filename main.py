@@ -5,10 +5,10 @@ from __future__ import annotations
 import logging
 import webbrowser
 
-from aggregate import aggregate, build_daily_top_expenses
-from cache import load_cache, save_cache
-from chart import build_html
-from parse import find_xlsx, parse_xlsx
+from app.aggregate import aggregate, build_daily_top_expenses
+from app.cache import load_cache, save_cache
+from app.chart import build_html
+from app.parse import find_xlsx, parse_xlsx
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("main")

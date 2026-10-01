@@ -7,7 +7,11 @@
 .vscode/
 __pycache__/
 
-archived/
-cache/
-input/
-output/
+# 运行时数据：账单、缓存、生成的页面都不入库
+data/input/*
+data/archived/
+data/cache.pkl
+data/output.html
+
+# 但保留占位，让目录结构在仓库里可见
+!data/input/.gitkeep

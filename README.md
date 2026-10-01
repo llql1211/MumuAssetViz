@@ -12,7 +12,7 @@
 
 ## 快速开始
 
-1. 将 xlsx 账单文件放入 `input/` 目录（只保留一个）
+1. 将 xlsx 账单文件放入 [data/input/](data/input/) 目录（只保留一个）
 2. 安装依赖（二选一）：
 
    ```bash
@@ -29,22 +29,30 @@
    pixi run python main.py
    ```
 
-4. 浏览器自动打开 `output/chart.html`
+4. 浏览器自动打开 `data/output/chart.html`
 
 ## 目录
 
 ```text
 MumuAssetViz/
 ├── main.py              # 入口
-├── parse.py             # xlsx 解析与数据清洗
-├── aggregate.py         # 按天/按月聚合
-├── cache.py             # 缓存与失效校验
-├── chart.py             # ECharts 图表构建与页面模板
+├── app/                 # 全部代码
+│   ├── paths.py         # 路径常量的唯一来源
+│   ├── parse.py         # xlsx 解析与数据清洗
+│   ├── aggregate.py     # 按天/按月聚合
+│   ├── cache.py         # 缓存与失效校验
+│   └── chart.py         # ECharts 图表构建与页面模板
 ├── assets/
-│   └── echarts.min.js   # ECharts 前端库（离线）
-├── input/               # 放 xlsx 账单
-└── output/              # 生成的 chart.html
+│   └── echarts.min.js   # ECharts 前端库（随仓库提交，离线）
+├── data/                # 全部数据
+│   ├── input/           # 放 xlsx 账单
+│   ├── archived/        # 手工归档的旧账单
+│   ├── cache/           # daily.pkl，可随时删
+│   └── output/          # 生成的 chart.html
+└── dev_notes/
 ```
+
+代码只从 `app/paths.py` 取路径，不各写各的；`data/` 是运行时产物（不入库），`assets/` 是随仓库提交的静态资源。
 
 ## xlsx 格式要求
 
@@ -54,4 +62,4 @@ MumuAssetViz/
 
 ## 缓存
 
-首次解析后聚合结果写入 `cache/daily.pkl`，xlsx 未变化时后续运行直接读取，跳过解析。
+首次解析后聚合结果写入 `data/cache/daily.pkl`，xlsx 未变化时后续运行直接读取，跳过解析。目录可随时删除，下次运行自动重建。
