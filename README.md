@@ -29,7 +29,7 @@
    pixi run python main.py
    ```
 
-4. 浏览器自动打开 `data/output/chart.html`
+4. 浏览器自动打开 `data/output.html`
 
 ## 目录
 
@@ -47,8 +47,8 @@ MumuAssetViz/
 ├── data/                # 全部数据
 │   ├── input/           # 放 xlsx 账单
 │   ├── archived/        # 手工归档的旧账单
-│   ├── cache/           # daily.pkl，可随时删
-│   └── output/          # 生成的 chart.html
+│   ├── cache.pkl         # 解析结果缓存，可随时删
+│   └── output.html       # 生成的图表页面
 └── dev_notes/
 ```
 
@@ -62,4 +62,4 @@ MumuAssetViz/
 
 ## 缓存
 
-首次解析后聚合结果写入 `data/cache/daily.pkl`，xlsx 未变化时后续运行直接读取，跳过解析。目录可随时删除，下次运行自动重建。
+首次解析后聚合结果写入 `data/cache.pkl`，xlsx 未变化时后续运行直接读取，跳过解析。文件可随时删除，下次运行自动重建。
